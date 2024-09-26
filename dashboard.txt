@@ -1,0 +1,143 @@
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+import os
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+
+# Streamlit page configuration
+st.set_page_config(page_title="Observation Dashboard", page_icon=":bar_chart:")
+
+st.title("Observation Dashboard")
+
+# Load data
+file_path = os.path.join(r'C:\Users\user\Downloads\observations.xlsx')
+df1 = pd.read_excel(file_path)
+
+file_path1 = os.path.join(r'C:\Users\user\Downloads\parent_audit_reports.xlsx')
+df2 = pd.read_excel(file_path1)
+
+# Merge the tables on the 'uk_id' column
+merged_table = pd.merge(df1, df2, on='uk_id')
+
+# Sidebar for filtering
+st.sidebar.header("Please Filter Here:")
+audited_zone = st.sidebar.multiselect(
+    "Select the Zone:",
+    options=merged_table["audited_zone"].unique(),
+    default=merged_table["audited_zone"].unique()
+)
+
+# Define df_selection based on audited_zone filter
+df_selection = merged_table.query("audited_zone == @audited_zone")
+
+# Calculate the top 10 broad classifications by count of observations
+top_broad_classifications = df_selection['broad_classification'].value_counts().nlargest(10).index.tolist()
+
+# Sidebar for selecting broad classifications
+broad_classification_selection = st.sidebar.multiselect(
+    "Select Top 10 Broad Classifications:",
+    options=top_broad_classifications,
+    default=top_broad_classifications
+)
+
+# Filter df_selection based on the selected broad classifications
+df_selection = df_selection.query("broad_classification in @broad_classification_selection")
+
+# Group by audited_zone and sum up financial_impact
+zone_financial_impact = df_selection.groupby('audited_zone')['financial_impact'].sum().reset_index()
+
+# Extract the numeric value from the string and convert to float
+def extract_numeric(value):
+    try:
+        return float(value.split()[0].replace(',', ''))
+    except:
+        return 0
+
+zone_financial_impact['financial_impact'] = zone_financial_impact['financial_impact'].apply(extract_numeric)
+
+# Sort the dataframe in descending order of financial impact
+zone_financial_impact = zone_financial_impact.sort_values(by='financial_impact', ascending=False)
+
+# Create the bar chart
+fig = px.bar(
+    zone_financial_impact,
+    x="audited_zone",
+    y="financial_impact",
+    orientation="v",  # vertical bar chart
+    title="<b>Financial Impact according to Zones</b>",
+    color_discrete_sequence=["#0083B8"] * len(zone_financial_impact),
+    template="plotly_white",
+)
+
+fig.update_layout(
+    plot_bgcolor="rgba(0,0,0,0)",
+    xaxis=dict(
+        showgrid=False,
+        tickangle=45  # rotate x-axis labels by 45 degrees
+    ),
+)
+
+# Convert financial_impact to numeric data type
+df_selection['financial_impact'] = df_selection['financial_impact'].apply(extract_numeric)
+
+# Handle NaN values
+df_selection.dropna(subset=['financial_impact'], inplace=True)
+
+# Create sunburst chart
+fig_sunburst = px.sunburst(df_selection, path=['broad_classification', 'sub_classification', 'classification'], values='financial_impact')
+
+# Create word cloud
+text = ' '.join(df_selection['sub_classification'].tolist())
+wordcloud = WordCloud(width=800, height=400, max_font_size=110).generate(text)
+
+# Group by location and count the number of observations
+location_summary = df_selection.groupby('location')['summary_of_observation'].count().reset_index()
+location_summary.columns = ['Location', 'Number of Observations']
+
+# Create the bar chart
+fig_bar = px.bar(
+    location_summary,
+    x="Location",
+    y="Number of Observations",
+    template="plotly_white",
+)
+
+fig_bar.update_layout(
+    plot_bgcolor="rgba(0,0,0,0)",
+    xaxis=dict(
+        showgrid=False,
+        tickangle=45  # rotate x-axis labels by 45 degrees
+    ),
+)
+
+# Display the line chart on the Streamlit dashboard
+st.write("**Summary of Observations by Location**")
+st.plotly_chart(fig_bar, use_container_width=True)
+
+# Display the charts and dataframes on the Streamlit dashboard
+st.plotly_chart(fig, use_container_width=True)
+
+st.write("**Word Cloud of SUB CLASSIFICATIONS**")
+fig_wordcloud, ax = plt.subplots(figsize=(10, 8))
+ax.imshow(wordcloud, interpolation='bilinear')
+ax.axis('off')
+st.pyplot(fig_wordcloud)
+
+broad_classification_summary = df_selection.groupby(['audit_period_start', 'audit_period_end', 'broad_classification']).agg({
+    'financial_impact': 'sum',
+    'summary_of_observation': 'count',
+}).reset_index()
+
+broad_classification_summary.columns = ['audit_period_start', 'audit_period_end', 'broad_classification', 'financial_impact', 'observation_count']
+
+# Create a bar chart for counts
+fig_count = px.bar(broad_classification_summary, x=['audit_period_start', 'audit_period_end'], y="observation_count", color="broad_classification", barmode="group", title="Count of Observations by Broad Classification")
+
+# Create a bar chart for financial impacts
+fig_financial_impact = px.bar(broad_classification_summary, x=['audit_period_start', 'audit_period_end'], y="financial_impact", color="broad_classification", barmode="group", title="Financial Impact by Broad Classification")
+
+# Display the charts on the Streamlit dashboard
+st.plotly_chart(fig_count, use_container_width=True)
+
+st.plotly_chart(fig_financial_impact, use_container_width=True)
